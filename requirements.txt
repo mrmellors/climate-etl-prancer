@@ -1,0 +1,22 @@
+# 36-614 course Python environment. Needs Python 3.11 or newer; we use 3.13.
+# Install into a virtual environment in your course folder:
+#     python -m pip install -r requirements.txt
+
+# Connect to the course database with your CMU sign-in (course_db.py)
+psycopg[binary]==3.3.6
+azure-identity==1.26.0
+
+# Data and plots
+pandas==3.0.6
+matplotlib==3.11.2
+seaborn==0.13.2
+plotnine==0.15.8        # ggplot2's grammar in Python
+
+# Download from web APIs and bulk-data sites
+requests==2.34.2
+
+# Let Quarto run Python code in .qmd reports
+ipykernel==7.4.0
+nbclient==0.11.0
+nbformat==5.11.1
+pyyaml==6.0.3

@@ -1,0 +1,44 @@
+---
+title: "[The client decision this report supports]"
+subtitle: "[team] · data through [newest date in the database]"
+format:
+  html:
+    embed-resources: true
+jupyter: python3
+execute:
+  echo: false
+---
+
+<!--
+What goes here: your Part II report. A summary, then one section per client
+visualization, each with the same five parts in the same order. Where possible, the
+numbers come from your database through code in this file, using the queries in
+sql/queries/. If you type a number in, say where it came from. Code stays hidden
+(echo: false).
+
+Limit: 2,500 words, not counting code or tables. We stop reading at the limit.
+Render with quarto render reports/report.qmd and commit the HTML.
+Delete these notes before you tag handoff.
+-->
+
+## Summary
+
+*Three sentences or fewer: the client's decision, what the evidence shows, and the main
+limit on it.*
+
+## [The takeaway, as a sentence with its number]
+
+**Client question:** *one sentence, in the client's words.*
+
+<!-- Code chunk: read the query from sql/queries/, run it against your schema, and draw
+the visualization. -->
+
+*What the reader should see, and the numbers behind it, each with its row unit.*
+
+**Caveat:** *one sentence: the limit that matters most for this result.*
+
+**Source:** `sql/queries/qNN-....sql`, data through [date].
+
+## [The next takeaway]
+
+*Same five parts, in the same order.*

@@ -1,0 +1,14 @@
+# Secrets and local settings: never commit these.
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv*/
+
+# Raw downloads: keep them out of Git; the refresh step can fetch them again.
+data/raw/
+
+# Quarto build folders (commit the rendered, self-contained HTML instead)
+.quarto/
+*_files/
