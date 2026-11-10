@@ -12,3 +12,6 @@ data/raw/
 # Quarto build folders (commit the rendered, self-contained HTML instead)
 .quarto/
 *_files/
+
+.DS_Store
+**/.DS_Store
