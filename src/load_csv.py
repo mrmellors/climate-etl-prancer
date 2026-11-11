@@ -42,18 +42,67 @@ When the file and the table don't match:
 """
 
 from pathlib import Path
+from io import StringIO
+import pandas as pd
 
 from course_db import connect
 
-TEAM = "dasher"                                      # your team
-CSV_FILE = Path("data/raw/pittsburgh-oct-2025.csv")  # the file to load
+TEAM = "prancer"                                      # your team
+ # the file to load downloaded seperately for this little example
+ # from: https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/
+CSV_FILE = Path("data/raw/storms_2025.csv.gz") 
 
+# Select some NOAA columns to load
+columns = [
+    "EVENT_ID",
+    "EPISODE_ID",
+    "STATE",
+    "EVENT_TYPE",
+    "BEGIN_YEARMONTH",
+    "DAMAGE_PROPERTY",
+    "DEATHS_DIRECT",
+    "INJURIES_DIRECT"
+]
+
+# Read the compressed CSV (the .gz part)
+df = pd.read_csv(
+    CSV_FILE,
+    compression="gzip",
+    usecols=columns
+)
+
+# Match the SQL column order
+df = df[columns]
+
+# Convert column names to lowercase
+df.columns = df.columns.str.lower()
+
+print(f"Found {len(df)} storm events")
+
+# Prepare CSV data for PostgreSQL COPY
+# normally we would pass a file output to .to_csv
+# here we use buffer which kind of acts as a temporary file
+# we do this so that we don't have to unpack the .gz file and have the csv locally as well
+buffer = StringIO()
+df.to_csv(buffer, index=False, na_rep="")
+buffer.seek(0)
+
+# Load into the team's database
 # Nothing is saved until this block ends without an error. If any row fails,
 # no rows are loaded.
 with connect(team=TEAM) as conn:
     with conn.cursor() as cur:
-        with cur.copy("COPY pittsburgh_oct FROM STDIN (FORMAT csv, HEADER true)") as copy:
-            with open(CSV_FILE, "rb") as f:
-                for line in f:
-                    copy.write(line)
-        print(f"Loaded {cur.rowcount} rows from {CSV_FILE}.")
+        with cur.copy(
+            """
+            COPY storm_events (
+                event_id, episode_id, state,
+                event_type, begin_yearmonth,
+                damage_property, deaths_direct,
+                injuries_direct
+            )
+            FROM STDIN (FORMAT csv, HEADER true)
+            """
+        ) as copy:
+            copy.write(buffer.getvalue().encode("utf-8"))
+
+print("Storm Events data loaded successfully!")

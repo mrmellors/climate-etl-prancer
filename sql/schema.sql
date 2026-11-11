@@ -5,8 +5,9 @@
 -- schema must succeed. Replace the example with your own tables.
 --
 -- Run it as your team, so the tables belong to the team and survive the handoff:
---   SET ROLE dasher_write;
---   SET search_path = dasher, course, public;
+
+SET ROLE prancer_write;
+SET search_path = prancer, course, public;
 
 -- Example: the shared course tables, as a team would write them.
 
@@ -40,4 +41,17 @@ CREATE TABLE ingestion_runs (
   rows_staged   INTEGER NOT NULL,
   rows_inserted INTEGER NOT NULL,
   rows_updated  INTEGER NOT NULL
+);
+
+
+-- Row unit: one NOAA storm event.
+CREATE TABLE storm_events (
+    event_id BIGINT PRIMARY KEY,
+    episode_id BIGINT,
+    state TEXT,
+    event_type TEXT,
+    begin_yearmonth INTEGER,
+    damage_property TEXT,
+    deaths_direct INTEGER,
+    injuries_direct INTEGER
 );
