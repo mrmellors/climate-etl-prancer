@@ -35,23 +35,46 @@ CREATE TABLE observations (
 
 -- Row unit: one run of src/refresh.py.
 CREATE TABLE ingestion_runs (
-  run_id        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  source        TEXT NOT NULL,
-  rows_staged   INTEGER NOT NULL,
-  rows_inserted INTEGER NOT NULL,
-  rows_updated  INTEGER NOT NULL
+    run_id        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    source        TEXT NOT NULL,
+    filename      TEXT,
+    status        TEXT NOT NULL DEFAULT 'success',
+    rows_staged   INTEGER NOT NULL,
+    rows_inserted INTEGER NOT NULL,
+    rows_updated  INTEGER NOT NULL
 );
 
-
--- Row unit: one NOAA storm event.
-CREATE TABLE storm_events (
+CREATE TABLE prancer.storm_events (
     event_id BIGINT PRIMARY KEY,
     episode_id BIGINT,
+
     state TEXT,
+    state_fips CHAR(2),
     event_type TEXT,
-    begin_yearmonth INTEGER,
-    damage_property TEXT,
+
+    cz_type CHAR(1),
+    cz_fips VARCHAR(3),
+    cz_name TEXT,
+    county_fips CHAR(5),
+
+    begin_date_time TIMESTAMP,
+    end_date_time TIMESTAMP,
+    cz_timezone TEXT,
+
+    damage_property NUMERIC(16, 2),
+    damage_crops NUMERIC(16, 2),
+
     deaths_direct INTEGER,
-    injuries_direct INTEGER
+    deaths_indirect INTEGER,
+    injuries_direct INTEGER,
+    injuries_indirect INTEGER,
+
+    begin_lat DOUBLE PRECISION,
+    begin_lon DOUBLE PRECISION,
+    end_lat DOUBLE PRECISION,
+    end_lon DOUBLE PRECISION,
+
+    magnitude NUMERIC,
+    magnitude_type TEXT
 );
