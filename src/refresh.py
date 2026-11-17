@@ -12,16 +12,15 @@ from __future__ import annotations
 
 import argparse
 import csv
-from datetime import date, datetime, timezone
 import gzip
 import os
-from pathlib import Path
 import re
+from datetime import UTC, date, datetime
+from pathlib import Path
 from urllib.parse import urljoin
 
 import psycopg
 import requests
-
 from course_db import connect
 
 HEADERS = {
@@ -30,19 +29,68 @@ HEADERS = {
 }
 NWS_STATIONS = ["KPIT", "KMIA", "KHOU", "KDFW", "KORD"]
 STATE_ABBR = {
-    "01": "AL", "02": "AK", "04": "AZ", "05": "AR", "06": "CA", "08": "CO", "09": "CT",
-    "10": "DE", "11": "DC", "12": "FL", "13": "GA", "15": "HI", "16": "ID", "17": "IL",
-    "18": "IN", "19": "IA", "20": "KS", "21": "KY", "22": "LA", "23": "ME", "24": "MD",
-    "25": "MA", "26": "MI", "27": "MN", "28": "MS", "29": "MO", "30": "MT", "31": "NE",
-    "32": "NV", "33": "NH", "34": "NJ", "35": "NM", "36": "NY", "37": "NC", "38": "ND",
-    "39": "OH", "40": "OK", "41": "OR", "42": "PA", "44": "RI", "45": "SC", "46": "SD",
-    "47": "TN", "48": "TX", "49": "UT", "50": "VT", "51": "VA", "53": "WA", "54": "WV",
-    "55": "WI", "56": "WY",
+    "01": "AL",
+    "02": "AK",
+    "04": "AZ",
+    "05": "AR",
+    "06": "CA",
+    "08": "CO",
+    "09": "CT",
+    "10": "DE",
+    "11": "DC",
+    "12": "FL",
+    "13": "GA",
+    "15": "HI",
+    "16": "ID",
+    "17": "IL",
+    "18": "IN",
+    "19": "IA",
+    "20": "KS",
+    "21": "KY",
+    "22": "LA",
+    "23": "ME",
+    "24": "MD",
+    "25": "MA",
+    "26": "MI",
+    "27": "MN",
+    "28": "MS",
+    "29": "MO",
+    "30": "MT",
+    "31": "NE",
+    "32": "NV",
+    "33": "NH",
+    "34": "NJ",
+    "35": "NM",
+    "36": "NY",
+    "37": "NC",
+    "38": "ND",
+    "39": "OH",
+    "40": "OK",
+    "41": "OR",
+    "42": "PA",
+    "44": "RI",
+    "45": "SC",
+    "46": "SD",
+    "47": "TN",
+    "48": "TX",
+    "49": "UT",
+    "50": "VT",
+    "51": "VA",
+    "53": "WA",
+    "54": "WV",
+    "55": "WI",
+    "56": "WY",
 }
 DAMAGE_MULT = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}
 
 
-def log_run(conn: psycopg.Connection, source_label: str, staged: int, inserted: int, updated: int) -> None:
+def log_run(
+    conn: psycopg.Connection,
+    source_label: str,
+    staged: int,
+    inserted: int,
+    updated: int,
+) -> None:
     """Record each completed refresh run in ingestion_runs."""
     conn.execute(
         """
@@ -61,11 +109,16 @@ def run_checks(conn: psycopg.Connection, checks: dict[str, str]) -> None:
         if count:
             problems.append(f"{name}: {count}")
     if problems:
-        raise SystemExit("Validation failed; nothing was loaded:\n  " + "\n  ".join(problems))
+        raise SystemExit(
+            "Validation failed; nothing was loaded:\n  "
+            + "\n  ".join(problems)
+        )
 
 
 # 1. GHCN-DAILY (Daily schedule)
-def refresh_ghcn(conn: psycopg.Connection, start: date, end: date) -> tuple[int, int, int]:
+def refresh_ghcn(
+    conn: psycopg.Connection, start: date, end: date
+) -> tuple[int, int, int]:
     rows = conn.execute(
         """
         SELECT station_id, date, tmax, tmin, precip
@@ -84,21 +137,26 @@ def refresh_ghcn(conn: psycopg.Connection, start: date, end: date) -> tuple[int,
         """
     )
     with conn.cursor() as cur:
-        with cur.copy("COPY stage_observations (station_id, date, tmax, tmin, precip) FROM STDIN") as copy:
+        with cur.copy(
+            "COPY stage_observations (station_id, date, tmax, tmin, precip) FROM STDIN"
+        ) as copy:
             for row in rows:
                 copy.write_row(row)
 
-    run_checks(conn, {
-        "duplicate (station_id, date) in stage": """
+    run_checks(
+        conn,
+        {
+            "duplicate (station_id, date) in stage": """
             SELECT count(*) FROM (
               SELECT station_id, date FROM stage_observations GROUP BY station_id, date HAVING count(*) > 1
             ) t""",
-        "negative precipitation": "SELECT count(*) FROM stage_observations WHERE precip < 0",
-        "tmax below tmin": "SELECT count(*) FROM stage_observations WHERE tmax < tmin",
-        "unknown station_id": """
+            "negative precipitation": "SELECT count(*) FROM stage_observations WHERE precip < 0",
+            "tmax below tmin": "SELECT count(*) FROM stage_observations WHERE tmax < tmin",
+            "unknown station_id": """
             SELECT count(*) FROM stage_observations s
             WHERE NOT EXISTS (SELECT 1 FROM course.stations c WHERE c.station_id = s.station_id)""",
-    })
+        },
+    )
 
     conn.execute(
         """
@@ -155,30 +213,45 @@ def refresh_nws(conn: psycopg.Connection) -> tuple[int, int, int]:
             p = feat["properties"]
             coords = (feat.get("geometry") or {}).get("coordinates") or []
             lon, lat = coords if len(coords) >= 2 else (None, None)
-            rows.append((
-                p["stationId"], p["timestamp"], lat, lon,
-                p["temperature"]["value"], p["dewpoint"]["value"],
-                p["windSpeed"]["value"], p["windGust"]["value"],
-                p["barometricPressure"]["value"], p["relativeHumidity"]["value"],
-                p["textDescription"],
-            ))
+            rows.append(
+                (
+                    p["stationId"],
+                    p["timestamp"],
+                    lat,
+                    lon,
+                    p["temperature"]["value"],
+                    p["dewpoint"]["value"],
+                    p["windSpeed"]["value"],
+                    p["windGust"]["value"],
+                    p["barometricPressure"]["value"],
+                    p["relativeHumidity"]["value"],
+                    p["textDescription"],
+                )
+            )
 
     conn.execute("DROP TABLE IF EXISTS pg_temp.stage_nws")
-    conn.execute("CREATE TEMP TABLE stage_nws (LIKE nws_observations) ON COMMIT DROP")
+    conn.execute(
+        "CREATE TEMP TABLE stage_nws (LIKE nws_observations) ON COMMIT DROP"
+    )
     with conn.cursor() as cur:
         with cur.copy("COPY stage_nws FROM STDIN") as copy:
             for row in rows:
                 copy.write_row(row)
 
-    run_checks(conn, {
-        "duplicate (station_id, observed_at)": """
+    run_checks(
+        conn,
+        {
+            "duplicate (station_id, observed_at)": """
             SELECT count(*) FROM (
               SELECT station_id, observed_at FROM stage_nws GROUP BY station_id, observed_at HAVING count(*) > 1
             ) t""",
-        "negative wind speed": "SELECT count(*) FROM stage_nws WHERE wind_speed_kmh < 0",
-    })
+            "negative wind speed": "SELECT count(*) FROM stage_nws WHERE wind_speed_kmh < 0",
+        },
+    )
 
-    (before,) = conn.execute("SELECT count(*) FROM nws_observations").fetchone()
+    (before,) = conn.execute(
+        "SELECT count(*) FROM nws_observations"
+    ).fetchone()
     changed = conn.execute(
         """
         INSERT INTO nws_observations
@@ -196,7 +269,9 @@ def refresh_nws(conn: psycopg.Connection) -> tuple[int, int, int]:
         RETURNING 1
         """
     ).rowcount
-    (after,) = conn.execute("SELECT count(*) FROM nws_observations").fetchone()
+    (after,) = conn.execute(
+        "SELECT count(*) FROM nws_observations"
+    ).fetchone()
     inserted = after - before
     return len(rows), inserted, changed - inserted
 
@@ -215,7 +290,9 @@ def parse_damage(val: str | None) -> float | None:
         return None
 
 
-def refresh_storms(conn: psycopg.Connection, start: date, end: date) -> tuple[int, int, int]:
+def refresh_storms(
+    conn: psycopg.Connection, start: date, end: date
+) -> tuple[int, int, int]:
     base_url = "https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/"
     raw_dir = Path("data/raw/storm_events")
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -226,28 +303,39 @@ def refresh_storms(conn: psycopg.Connection, start: date, end: date) -> tuple[in
 
     valid_fips = {
         fips.strip()
-        for (fips,) in conn.execute("SELECT county_fips FROM course.counties").fetchall()
+        for (fips,) in conn.execute(
+            "SELECT county_fips FROM course.counties"
+        ).fetchall()
     }
     rows = []
 
     for yr in range(start.year, end.year + 1):
-        matches = re.findall(rf'href="(StormEvents_details-ftp_v1\.0_d{yr}_c\d+\.csv\.gz)"', index_html)
+        matches = re.findall(
+            rf'href="(StormEvents_details-ftp_v1\.0_d{yr}_c\d+\.csv\.gz)"',
+            index_html,
+        )
         if matches:
             fname = sorted(matches)[-1]
             fpath = raw_dir / fname
             if not fpath.exists():
-                resp = requests.get(base_url + fname, headers=HEADERS, timeout=120)
+                resp = requests.get(
+                    base_url + fname, headers=HEADERS, timeout=120
+                )
                 resp.raise_for_status()
                 fpath.write_bytes(resp.content)
         else:
             # Fall back to any already-downloaded file for that year in data/raw/storm_events/
-            cached = sorted(raw_dir.glob(f"StormEvents_details-ftp_v1.0_d{yr}_c*.csv.gz"))
+            cached = sorted(
+                raw_dir.glob(f"StormEvents_details-ftp_v1.0_d{yr}_c*.csv.gz")
+            )
             if not cached:
                 print(f"Note: no Storm Events file found for {yr}.")
                 continue
             fpath = cached[-1]
 
-        with gzip.open(fpath, "rt", encoding="utf-8", errors="replace", newline="") as f:
+        with gzip.open(
+            fpath, "rt", encoding="utf-8", errors="replace", newline=""
+        ) as f:
             for r in csv.DictReader(f):
                 st_fp = (r.get("STATE_FIPS") or "").strip().zfill(2)
                 if st_fp not in STATE_ABBR:
@@ -260,17 +348,41 @@ def refresh_storms(conn: psycopg.Connection, start: date, end: date) -> tuple[in
                 begin_str = (r.get("BEGIN_DATE_TIME") or "").strip()
                 if not begin_str:
                     continue
-                begin_ts = datetime.strptime(begin_str, "%d-%b-%y %H:%M:%S").replace(tzinfo=timezone.utc)
+                begin_ts = datetime.strptime(
+                    begin_str, "%d-%b-%y %H:%M:%S"
+                ).replace(tzinfo=UTC)
                 if not (start <= begin_ts.date() < end):
                     continue
 
                 end_str = (r.get("END_DATE_TIME") or "").strip()
-                end_ts = datetime.strptime(end_str, "%d-%b-%y %H:%M:%S").replace(tzinfo=timezone.utc) if end_str else None
+                end_ts = (
+                    datetime.strptime(end_str, "%d-%b-%y %H:%M:%S").replace(
+                        tzinfo=UTC
+                    )
+                    if end_str
+                    else None
+                )
 
-                lat = float(r["BEGIN_LAT"]) if (r.get("BEGIN_LAT") or "").strip() else None
-                lon = float(r["BEGIN_LON"]) if (r.get("BEGIN_LON") or "").strip() else None
-                end_lat = float(r["END_LAT"]) if (r.get("END_LAT") or "").strip() else None
-                end_lon = float(r["END_LON"]) if (r.get("END_LON") or "").strip() else None
+                lat = (
+                    float(r["BEGIN_LAT"])
+                    if (r.get("BEGIN_LAT") or "").strip()
+                    else None
+                )
+                lon = (
+                    float(r["BEGIN_LON"])
+                    if (r.get("BEGIN_LON") or "").strip()
+                    else None
+                )
+                end_lat = (
+                    float(r["END_LAT"])
+                    if (r.get("END_LAT") or "").strip()
+                    else None
+                )
+                end_lon = (
+                    float(r["END_LON"])
+                    if (r.get("END_LON") or "").strip()
+                    else None
+                )
                 if lat is not None and not (-90 <= lat <= 90):
                     lat = None
                 if lon is not None and not (-180 <= lon <= 180):
@@ -280,41 +392,66 @@ def refresh_storms(conn: psycopg.Connection, start: date, end: date) -> tuple[in
                 if end_lon is not None and not (-180 <= end_lon <= 180):
                     end_lon = None
 
-                fips = f"{st_fp}{cz_fp}" if (cz_type == "C" and f"{st_fp}{cz_fp}" in valid_fips) else None
+                fips = (
+                    f"{st_fp}{cz_fp}"
+                    if (cz_type == "C" and f"{st_fp}{cz_fp}" in valid_fips)
+                    else None
+                )
                 fips_src = "direct" if fips else "unmatched"
 
-                rows.append((
-                    int(r["EVENT_ID"]),
-                    int(r["EPISODE_ID"]) if (r.get("EPISODE_ID") or "").strip() else None,
-                    st_fp, STATE_ABBR[st_fp], (r.get("STATE") or "").strip(),
-                    cz_type, cz_fp, fips, (r.get("EVENT_TYPE") or "").strip(),
-                    begin_ts, end_ts,
-                    max(0, int(r.get("INJURIES_DIRECT") or 0)),
-                    max(0, int(r.get("INJURIES_INDIRECT") or 0)),
-                    max(0, int(r.get("DEATHS_DIRECT") or 0)),
-                    max(0, int(r.get("DEATHS_INDIRECT") or 0)),
-                    parse_damage(r.get("DAMAGE_PROPERTY")),
-                    parse_damage(r.get("DAMAGE_CROPS")),
-                    float(r["MAGNITUDE"]) if (r.get("MAGNITUDE") or "").strip() else None,
-                    (r.get("MAGNITUDE_TYPE") or "").strip() or None,
-                    lat, lon, end_lat, end_lon, fips_src,
-                ))
+                rows.append(
+                    (
+                        int(r["EVENT_ID"]),
+                        int(r["EPISODE_ID"])
+                        if (r.get("EPISODE_ID") or "").strip()
+                        else None,
+                        st_fp,
+                        STATE_ABBR[st_fp],
+                        (r.get("STATE") or "").strip(),
+                        cz_type,
+                        cz_fp,
+                        fips,
+                        (r.get("EVENT_TYPE") or "").strip(),
+                        begin_ts,
+                        end_ts,
+                        max(0, int(r.get("INJURIES_DIRECT") or 0)),
+                        max(0, int(r.get("INJURIES_INDIRECT") or 0)),
+                        max(0, int(r.get("DEATHS_DIRECT") or 0)),
+                        max(0, int(r.get("DEATHS_INDIRECT") or 0)),
+                        parse_damage(r.get("DAMAGE_PROPERTY")),
+                        parse_damage(r.get("DAMAGE_CROPS")),
+                        float(r["MAGNITUDE"])
+                        if (r.get("MAGNITUDE") or "").strip()
+                        else None,
+                        (r.get("MAGNITUDE_TYPE") or "").strip() or None,
+                        lat,
+                        lon,
+                        end_lat,
+                        end_lon,
+                        fips_src,
+                    )
+                )
 
     conn.execute("DROP TABLE IF EXISTS pg_temp.stage_storms")
-    conn.execute("CREATE TEMP TABLE stage_storms (LIKE storm_events INCLUDING DEFAULTS) ON COMMIT DROP")
+    conn.execute(
+        "CREATE TEMP TABLE stage_storms (LIKE storm_events INCLUDING DEFAULTS) ON COMMIT DROP"
+    )
     with conn.cursor() as cur:
         with cur.copy("COPY stage_storms FROM STDIN") as copy:
             for row in rows:
                 copy.write_row(row)
 
-    run_checks(conn, {
-        "duplicate event_id in stage": """
+    run_checks(
+        conn,
+        {
+            "duplicate event_id in stage": """
             SELECT count(*) FROM (
               SELECT event_id FROM stage_storms GROUP BY event_id HAVING count(*) > 1
             ) t""",
-        "negative property damage": "SELECT count(*) FROM stage_storms WHERE damage_property_usd < 0",
-        "negative deaths": "SELECT count(*) FROM stage_storms WHERE deaths_direct < 0 OR deaths_indirect < 0",
-    })
+            "negative property damage": "SELECT count(*) FROM stage_storms WHERE damage_property_usd < 0",
+            "negative deaths": "SELECT count(*) FROM stage_storms WHERE deaths_direct < 0 OR deaths_indirect < 0",
+        },
+    )
 
     (before,) = conn.execute("SELECT count(*) FROM storm_events").fetchone()
     changed = conn.execute(
@@ -338,11 +475,17 @@ def refresh_storms(conn: psycopg.Connection, start: date, end: date) -> tuple[in
 
 
 # 4. HURDAT2 ATLANTIC BEST TRACKS (Seasonal schedule)
-def refresh_hurdat(conn: psycopg.Connection, min_year: int = 1980) -> tuple[int, int, int]:
+def refresh_hurdat(
+    conn: psycopg.Connection, min_year: int = 1980
+) -> tuple[int, int, int]:
     index_url = "https://www.nhc.noaa.gov/data/hurdat/"
     idx_resp = requests.get(index_url, headers=HEADERS, timeout=30)
     idx_resp.raise_for_status()
-    matches = re.findall(r'href="([^"]*hurdat2-1851-[^"]+\.txt)"', idx_resp.text, flags=re.IGNORECASE)
+    matches = re.findall(
+        r'href="([^"]*hurdat2-1851-[^"]+\.txt)"',
+        idx_resp.text,
+        flags=re.IGNORECASE,
+    )
     file_url = urljoin(index_url, sorted(matches)[-1])
     resp = requests.get(file_url, headers=HEADERS, timeout=60)
     resp.raise_for_status()
@@ -357,19 +500,32 @@ def refresh_hurdat(conn: psycopg.Connection, min_year: int = 1980) -> tuple[int,
             storm_id, name, n_s, _ = parts
             if storm_id[:2] in ("AL", "EP", "CP"):
                 if cur_id is not None and seen != expected:
-                    raise SystemExit(f"HURDAT2 integrity error on {cur_id}: expected {expected} pts, saw {seen}")
+                    raise SystemExit(
+                        f"HURDAT2 integrity error on {cur_id}: expected {expected} pts, saw {seen}"
+                    )
                 cur_id, expected, seen = storm_id, int(n_s), 0
                 yr = int(cur_id[4:8])
                 keep = yr >= min_year
                 if keep:
-                    storms.append((cur_id, name, cur_id[:2], int(cur_id[2:4]), yr, expected))
+                    storms.append(
+                        (
+                            cur_id,
+                            name,
+                            cur_id[:2],
+                            int(cur_id[2:4]),
+                            yr,
+                            expected,
+                        )
+                    )
         elif len(parts) in (20, 21):
             seen += 1
             if not keep:
                 continue
             ymd, hm, rec_id, status, lat_s, lon_s, wind_s, pres_s = parts[:8]
             rec_id = rec_id or "R"
-            dt = datetime.strptime(ymd + hm.zfill(4), "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(ymd + hm.zfill(4), "%Y%m%d%H%M").replace(
+                tzinfo=UTC
+            )
             lat = float(lat_s[:-1]) * (-1 if lat_s.endswith("S") else 1)
             lon = float(lon_s[:-1]) * (-1 if lon_s.endswith("W") else 1)
             wind = int(wind_s) if int(wind_s) >= 0 else None
@@ -391,15 +547,18 @@ def refresh_hurdat(conn: psycopg.Connection, min_year: int = 1980) -> tuple[int,
             for row in tracks:
                 copy.write_row(row)
 
-    run_checks(conn, {
-        "duplicate track fix": """
+    run_checks(
+        conn,
+        {
+            "duplicate track fix": """
             SELECT count(*) FROM (
               SELECT storm_id, observed_at, record_identifier FROM stage_hurdat_tracks
               GROUP BY 1, 2, 3 HAVING count(*) > 1
             ) t""",
-        "invalid latitude": "SELECT count(*) FROM stage_hurdat_tracks WHERE lat NOT BETWEEN -90 AND 90",
-        "invalid longitude": "SELECT count(*) FROM stage_hurdat_tracks WHERE lon NOT BETWEEN -180 AND 180",
-    })
+            "invalid latitude": "SELECT count(*) FROM stage_hurdat_tracks WHERE lat NOT BETWEEN -90 AND 90",
+            "invalid longitude": "SELECT count(*) FROM stage_hurdat_tracks WHERE lon NOT BETWEEN -180 AND 180",
+        },
+    )
 
     with conn.cursor() as cur:
         cur.executemany(
@@ -413,7 +572,9 @@ def refresh_hurdat(conn: psycopg.Connection, min_year: int = 1980) -> tuple[int,
             storms,
         )
 
-        (before,) = conn.execute("SELECT count(*) FROM hurdat_tracks").fetchone()
+        (before,) = conn.execute(
+            "SELECT count(*) FROM hurdat_tracks"
+        ).fetchone()
     changed = conn.execute(
         """
         INSERT INTO hurdat_tracks (storm_id, observed_at, record_identifier, system_status, lat, lon, max_wind_kt, min_pressure_mb)
@@ -436,48 +597,70 @@ def refresh_hurdat(conn: psycopg.Connection, min_year: int = 1980) -> tuple[int,
 
 
 # 5. CENSUS ACS 5-YEAR DEMOGRAPHICS (Annual schedule)
-def refresh_census(conn: psycopg.Connection, acs_year: int = 2024) -> tuple[int, int, int]:
+def refresh_census(
+    conn: psycopg.Connection, acs_year: int = 2024
+) -> tuple[int, int, int]:
     api_key = os.environ.get("CENSUS_API_KEY")
     if not api_key:
         raise SystemExit("Missing CENSUS_API_KEY environment variable.")
     resp = requests.get(
         f"https://api.census.gov/data/{acs_year}/acs/acs5",
-        params={"get": "NAME,B01003_001E,B19013_001E,B25077_001E,B25001_001E", "for": "county:*", "key": api_key},
+        params={
+            "get": "NAME,B01003_001E,B19013_001E,B25077_001E,B25001_001E",
+            "for": "county:*",
+            "key": api_key,
+        },
         timeout=60,
     )
     resp.raise_for_status()
     valid_fips = {
         fips.strip()
-        for (fips,) in conn.execute("SELECT county_fips FROM course.counties").fetchall()
+        for (fips,) in conn.execute(
+            "SELECT county_fips FROM course.counties"
+        ).fetchall()
     }
 
-    clean = lambda v: None if v is None or v == "" or float(v) < 0 else float(v)
+    clean = lambda v: (
+        None if v is None or v == "" or float(v) < 0 else float(v)
+    )
     rows = []
     for name, pop, inc, home, units, st, co in resp.json()[1:]:
         fips = f"{st.zfill(2)}{co.zfill(3)}"
         if fips not in valid_fips:
             continue
         pv, uv = clean(pop), clean(units)
-        rows.append((
-            fips, name, acs_year,
-            int(pv) if pv is not None else None,
-            clean(inc), clean(home),
-            int(uv) if uv is not None else None,
-        ))
+        rows.append(
+            (
+                fips,
+                name,
+                acs_year,
+                int(pv) if pv is not None else None,
+                clean(inc),
+                clean(home),
+                int(uv) if uv is not None else None,
+            )
+        )
 
     conn.execute("DROP TABLE IF EXISTS pg_temp.stage_census")
-    conn.execute("CREATE TEMP TABLE stage_census (LIKE county_demographics) ON COMMIT DROP")
+    conn.execute(
+        "CREATE TEMP TABLE stage_census (LIKE county_demographics) ON COMMIT DROP"
+    )
     with conn.cursor() as cur:
         with cur.copy("COPY stage_census FROM STDIN") as copy:
             for row in rows:
                 copy.write_row(row)
 
-    run_checks(conn, {
-        "negative population": "SELECT count(*) FROM stage_census WHERE population < 0",
-        "negative median income": "SELECT count(*) FROM stage_census WHERE median_income < 0",
-    })
+    run_checks(
+        conn,
+        {
+            "negative population": "SELECT count(*) FROM stage_census WHERE population < 0",
+            "negative median income": "SELECT count(*) FROM stage_census WHERE median_income < 0",
+        },
+    )
 
-    (before,) = conn.execute("SELECT count(*) FROM county_demographics").fetchone()
+    (before,) = conn.execute(
+        "SELECT count(*) FROM county_demographics"
+    ).fetchone()
     changed = conn.execute(
         """
         INSERT INTO county_demographics
@@ -494,38 +677,59 @@ def refresh_census(conn: psycopg.Connection, acs_year: int = 2024) -> tuple[int,
         RETURNING 1
         """
     ).rowcount
-    (after,) = conn.execute("SELECT count(*) FROM county_demographics").fetchone()
+    (after,) = conn.execute(
+        "SELECT count(*) FROM county_demographics"
+    ).fetchone()
     inserted = after - before
     return len(rows), inserted, changed - inserted
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Pull new data for a source and append it safely.")
-    parser.add_argument("--team", required=True, help="your team, e.g. prancer")
+    parser = argparse.ArgumentParser(
+        description="Pull new data for a source and append it safely."
+    )
+    parser.add_argument(
+        "--team", required=True, help="your team, e.g. prancer"
+    )
     parser.add_argument(
         "--source",
         default="ghcn",
         choices=["ghcn", "nws", "storms", "hurdat", "census"],
         help="which data source to refresh (each has its own schedule)",
     )
-    parser.add_argument("--start", type=date.fromisoformat, default=date(2026, 1, 1),
-                        help="first date to load, YYYY-MM-DD (used by ghcn and storms)")
-    parser.add_argument("--end", type=date.fromisoformat, default=date(2026, 12, 31),
-                        help="day after last date to load, YYYY-MM-DD (used by ghcn and storms)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="do everything, report the counts, then undo it")
+    parser.add_argument(
+        "--start",
+        type=date.fromisoformat,
+        default=date(2026, 1, 1),
+        help="first date to load, YYYY-MM-DD (used by ghcn and storms)",
+    )
+    parser.add_argument(
+        "--end",
+        type=date.fromisoformat,
+        default=date(2026, 12, 31),
+        help="day after last date to load, YYYY-MM-DD (used by ghcn and storms)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="do everything, report the counts, then undo it",
+    )
     args = parser.parse_args()
 
     with connect(team=args.team) as conn:
         with conn.transaction():
             if args.source == "ghcn":
-                staged, inserted, updated = refresh_ghcn(conn, args.start, args.end)
+                staged, inserted, updated = refresh_ghcn(
+                    conn, args.start, args.end
+                )
                 label = f"ghcn ({args.start} to {args.end})"
             elif args.source == "nws":
                 staged, inserted, updated = refresh_nws(conn)
                 label = "nws (live observations)"
             elif args.source == "storms":
-                staged, inserted, updated = refresh_storms(conn, args.start, args.end)
+                staged, inserted, updated = refresh_storms(
+                    conn, args.start, args.end
+                )
                 label = f"noaa_storms ({args.start} to {args.end})"
             elif args.source == "hurdat":
                 staged, inserted, updated = refresh_hurdat(conn)
@@ -535,7 +739,9 @@ def main() -> None:
                 label = "census_acs5 (county demographics)"
 
             log_run(conn, label, staged, inserted, updated)
-            print(f"[{label}] {staged} rows staged, {inserted} inserted, {updated} updated.")
+            print(
+                f"[{label}] {staged} rows staged, {inserted} inserted, {updated} updated."
+            )
             if args.dry_run:
                 print("Dry run: undoing all changes.")
                 raise psycopg.Rollback()
