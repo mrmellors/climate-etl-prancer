@@ -64,7 +64,7 @@ def transform_hurricanes(content):
 
     # NOAA uses -999 for missing measurements.
     for col in ["max_wind_kt", "min_pressure_mb"]:
-        tracks[col] = pd.to_numeric(tracks[col]).replace(-999, pd.NA).astype("Int64")
+        tracks[col] = pd.to_numeric(tracks[col]).replace([-999, -99], pd.NA).astype("Int64")
 
     return storms, tracks[TRACK_COLUMNS]
 
@@ -76,9 +76,17 @@ def load_stage(conn, storms, tracks):
         ("hurdat_tracks", TRACK_COLUMNS, tracks),
     ]:
         conn.execute(f"""
-            CREATE TEMP TABLE stage_{table}
-            (LIKE prancer.{table} INCLUDING DEFAULTS) ON COMMIT DROP
+            CREATE TEMP TABLE stage_{table} (
+                LIKE prancer.{table} INCLUDING DEFAULTS
+            ) ON COMMIT DROP
         """)
+
+        if table == "hurdat_tracks":
+            conn.execute("""
+                ALTER TABLE stage_hurdat_tracks
+                DROP COLUMN track_id
+            """)
+
         buffer = StringIO()
         df.to_csv(buffer, index=False, na_rep="")
         cols = ", ".join(columns)
