@@ -176,12 +176,39 @@ def merge(conn):
     return inserted, updated
 
 
-def record_success(conn, staged, inserted, updated):
+def already_loaded(conn, filename):
+    result = conn.execute("""
+        SELECT EXISTS (
+            SELECT 1
+            FROM prancer.ingestion_runs
+            WHERE source = 'hurdat2'
+              AND filename = %s
+              AND status = 'success'
+        )
+    """, (filename,)).fetchone()
+
+    return result[0]
+
+
+def record_success(conn, filename, staged, inserted, updated):
     conn.execute("""
-        INSERT INTO prancer.ingestion_runs
-        (source, rows_staged, rows_inserted, rows_updated)
-        VALUES (%s, %s, %s, %s)
-    """, ("hurdat2", staged, inserted, updated))
+        INSERT INTO prancer.ingestion_runs (
+            source,
+            filename,
+            status,
+            rows_staged,
+            rows_inserted,
+            rows_updated
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (
+        "hurdat2",
+        filename,
+        "success",
+        staged,
+        inserted,
+        updated
+    ))
 
 
 def refresh_hurricanes():
@@ -194,20 +221,35 @@ def refresh_hurricanes():
     filename = max(matches)
 
     print(f"Reading {filename}")
-    response = requests.get(BASE_URL + filename, timeout=120)
-    response.raise_for_status()
-    storms, tracks = transform_hurricanes(response.content.decode("utf-8-sig"))
 
-    # Stage, validate, merge, and log in one transaction.
     with connect(team="prancer", autocommit=True) as conn:
+
+        if already_loaded(conn, filename):
+            print(f"Skipping {filename}: already loaded")
+            return
+
+        response = requests.get(BASE_URL + filename, timeout=120)
+        response.raise_for_status()
+
+        storms, tracks = transform_hurricanes(
+            response.content.decode("utf-8-sig")
+        )
+
         with conn.transaction():
             load_stage(conn, storms, tracks)
             validate(conn)
+
             inserted, updated = merge(conn)
-            record_success(conn, len(storms) + len(tracks), inserted, updated)
+
+            record_success(
+                conn,
+                filename,
+                len(storms) + len(tracks),
+                inserted,
+                updated
+            )
 
     print(f"Finished: {inserted:,} inserted, {updated:,} updated")
-
 
 if __name__ == "__main__":
     refresh_hurricanes()

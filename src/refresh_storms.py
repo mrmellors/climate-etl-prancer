@@ -36,6 +36,41 @@ COLUMNS = [
 ]
 
 
+TIMEZONE_OFFSETS = {
+    "EST": -5,
+    "CST": -6,
+    "MST": -7,
+    "PST": -8,
+    "AKST": -9,
+    "HST": -10,
+    "AST": -4,
+    "SST": -11,
+    "EDT": -4,
+    "CDT": -5,
+    "MDT": -6,
+    "PDT": -7,
+    "GST": 10
+}
+
+
+def parse_timezone_offset(value):
+    """Return NOAA timezone's offset from UTC in hours."""
+    if pd.isna(value):
+        raise ValueError("Missing NOAA timezone")
+
+    value = str(value).strip().upper()
+
+    # Explicit offset, e.g. EST-5, CST-6, GST10
+    match = re.fullmatch(r"[A-Z]+([+-]?\d{1,2})", value)
+
+    if match:
+        return int(match.group(1))
+
+    if value in TIMEZONE_OFFSETS:
+        return TIMEZONE_OFFSETS[value]
+
+    raise ValueError(f"Unknown NOAA timezone: {value}")
+
 def transform_storms(df):
     # Select columns and lowercase their names
     df = df[COLUMNS].copy()
@@ -49,6 +84,29 @@ def transform_storms(df):
             .astype("string")
             .str.zfill(width)
         )
+
+    # NOAA-specific territory conversions
+    STATE_FIPS_MAP = {
+        "99": "72",  # Puerto Rico
+        "96": "78",  # Virgin Islands
+        "97": "60",  # American Samoa
+        "98": "66",  # Guam
+    }
+
+    states_df = pd.read_csv("./data/states.psv", sep= "|", dtype=str)
+    # Standard state/territory FIPS + NOAA territory codes
+    valid_fips = set(states_df["STATE"]) | set(STATE_FIPS_MAP)
+
+    # Identify NOAA regions
+    mask = df["state_fips"].notna() & ~df["state_fips"].isin(valid_fips)
+
+    df["noaa_region"] = df["state"].where(mask)
+    df.loc[mask, "state_fips"] = pd.NA
+
+    # Convert territory codes to Census FIPS
+    df["state_fips"] = df["state_fips"].replace(STATE_FIPS_MAP)
+
+    df = df.drop(columns=["state"])
 
     # Derive county FIPS for county-reported events
     df["county_fips"] = pd.Series(pd.NA, index=df.index, dtype="string")
@@ -83,19 +141,37 @@ def transform_storms(df):
         except ValueError:
             return None
 
-    df["damage_property"] = df["damage_property"].map(parse_damage)
-    df["damage_crops"] = df["damage_crops"].map(parse_damage)
+    df["damage_property_usd"] = df["damage_property"].map(parse_damage)
+    df["damage_crops_usd"] = df["damage_crops"].map(parse_damage)
+
+    df = df.drop(columns = ["damage_property", "damage_crops"])
 
     # Convert dates (keep NOAA local times, not UTC)
+    # Convert NOAA local timestamps to UTC
+    offset_hours = df["cz_timezone"].map(parse_timezone_offset)
+
     for col in ["begin_date_time", "end_date_time"]:
-        df[col] = pd.to_datetime(
+        local_times = pd.to_datetime(
             df[col],
             format="%d-%b-%y %H:%M:%S",
             errors="coerce"
         )
 
-        # Numeric columns
-        # Integer columns
+        # UTC = local time - UTC offset
+        utc_times = (
+            local_times
+            - pd.to_timedelta(offset_hours, unit="h")
+        )
+
+        df[col] = utc_times.dt.tz_localize("UTC")
+
+    df = df.rename(columns={
+    "begin_date_time": "begin_ts",
+    "end_date_time": "end_ts"
+})
+
+    # Numeric columns
+    # Integer columns
     integer_cols = [
         "event_id",
         "episode_id",
@@ -122,7 +198,7 @@ def transform_storms(df):
     for col in float_cols:
         df[col] = pd.to_numeric(
             df[col], errors="coerce"
-            
+
         )
     # Remove impossible coordinate values
     for col in ["begin_lat", "end_lat"]:
@@ -145,8 +221,42 @@ def load_stage(conn, df):
     """)
 
     # Convert the DataFrame to CSV text in memory
+    copy_columns = [
+        "event_id",
+        "episode_id",
+        "state_fips",
+        "noaa_region",
+        "event_type",
+        "cz_type",
+        "cz_fips",
+        "cz_name",
+        "cz_timezone",
+        "begin_ts",
+        "end_ts",
+        "damage_property_usd",
+        "damage_crops_usd",
+        "deaths_direct",
+        "deaths_indirect",
+        "injuries_direct",
+        "injuries_indirect",
+        "begin_lat",
+        "begin_lon",
+        "end_lat",
+        "end_lon",
+        "magnitude",
+        "magnitude_type",
+        "county_fips"
+    ]
+
     buffer = StringIO()
-    df.to_csv(buffer, index=False, na_rep="")
+
+    df.to_csv(
+        buffer,
+        columns=copy_columns,
+        index=False,
+        na_rep=""
+    )
+
     buffer.seek(0)
 
     # Load the data into the temporary staging table
@@ -155,17 +265,17 @@ def load_stage(conn, df):
             COPY stage_storms (
                 event_id,
                 episode_id,
-                state,
                 state_fips,
+                noaa_region,
                 event_type,
                 cz_type,
                 cz_fips,
                 cz_name,
                 cz_timezone,
-                begin_date_time,
-                end_date_time,
-                damage_property,
-                damage_crops,
+                begin_ts,
+                end_ts,
+                damage_property_usd,
+                damage_crops_usd,
                 deaths_direct,
                 deaths_indirect,
                 injuries_direct,
@@ -201,7 +311,7 @@ def validate(conn):
         "Missing start dates": """
             SELECT COUNT(*)
             FROM stage_storms
-            WHERE begin_date_time IS NULL
+            WHERE begin_ts IS NULL
         """
     }
 
@@ -219,10 +329,10 @@ def merge(conn):
     """Insert new storms and update existing storms if changed."""
 
     columns = [
-        "event_id", "episode_id", "state", "state_fips",
+        "event_id", "episode_id", "state_fips", "noaa_region",
         "event_type", "cz_type", "cz_fips", "cz_name",
-        "begin_date_time", "end_date_time", "cz_timezone",
-        "damage_property", "damage_crops",
+        "begin_ts", "end_ts", "cz_timezone",
+        "damage_property_usd", "damage_crops_usd",
         "deaths_direct", "deaths_indirect",
         "injuries_direct", "injuries_indirect",
         "begin_lat", "begin_lon", "end_lat", "end_lon",
