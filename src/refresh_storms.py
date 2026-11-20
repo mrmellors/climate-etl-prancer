@@ -428,7 +428,14 @@ def record_success(conn, filename, staged, inserted, updated):
     )
 
 
-def refresh_storms():
+def refresh_storms(start_year=1996, end_year=None, force=False):
+
+    if end_year is None:
+        end_year = datetime.now().year
+
+    if start_year > end_year:
+        raise ValueError("start_year cannot exceed end_year")
+    
     # Get NOAA's directory listing
     response = requests.get(BASE_URL, timeout=30)
     response.raise_for_status()
@@ -439,7 +446,7 @@ def refresh_storms():
     with connect(team="prancer", autocommit=True) as conn:
 
         # Loop over all years
-        for year in range(1996, datetime.now().year + 1):
+        for year in range(start_year, end_year + 1):
 
             pattern = (
                 rf"StormEvents_details-ftp_v1\.0_"
@@ -456,7 +463,7 @@ def refresh_storms():
             filename = max(matches)
 
             # Skip if this exact version was already loaded
-            if already_loaded(conn, filename):
+            if not force and already_loaded(conn, filename):
                 print(f"Skipping {year}: already loaded")
                 continue
 
