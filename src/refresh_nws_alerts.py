@@ -8,7 +8,7 @@ from course_db import connect
 BASE_URL = "https://api.weather.gov/alerts"
 
 HEADERS = {
-    "User-Agent": "36-614 project (ahou@andrew.cmu.edu)",
+    "User-Agent": "CMU 36-614 Prancer Climate ETL (your-email@andrew.cmu.edu)",
     "Accept": "application/geo+json"
 }
 

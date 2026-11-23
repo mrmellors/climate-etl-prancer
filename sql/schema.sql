@@ -1,3 +1,4 @@
+
 -- Schema: creates every table, key, and constraint from scratch for
 -- Climate Risk Analytics & P&C Insurance Underwriting project.
 --
@@ -5,64 +6,55 @@
 SET ROLE prancer_write;
 SET search_path = prancer, course, public;
 
+
 -- Row unit: one US state, district, or territory
-CREATE TABLE IF NOT EXISTS states (
-  state_fips CHAR(2) PRIMARY KEY,
-  state_abbr CHAR(2) UNIQUE NOT NULL,
-  state_name TEXT UNIQUE NOT NULL,
+CREATE TABLE IF NOT EXISTS prancer.states (
+    state_fips CHAR(2) PRIMARY KEY,
+    state_abbr CHAR(2) UNIQUE NOT NULL,
+    state_name TEXT UNIQUE NOT NULL,
 
-  CONSTRAINT valid_state_fips
-      CHECK (state_fips ~ '^[0-9]{2}$'),
+    CONSTRAINT valid_state_fips
+        CHECK (state_fips ~ '^[0-9]{2}$'),
 
-  CONSTRAINT valid_state_abbr
-      CHECK (state_abbr ~ '^[A-Z]{2}$')
+    CONSTRAINT valid_state_abbr
+        CHECK (state_abbr ~ '^[A-Z]{2}$')
 );
 
--- Row unit: one county
-CREATE TABLE IF NOT EXISTS counties (
-  county_fips CHAR(5) PRIMARY KEY CHECK (county_fips ~ '^[0-9]{5}$'),
-  state CHAR(2) NOT NULL,
-  name TEXT NOT NULL, 
-  land_sq_mi DOUBLE PRECISION, 
-  lat DOUBLE PRECISION CHECK (lat BETWEEN -90 AND 90),
-  lon DOUBLE PRECISION CHECK (lon BETWEEN -180 AND 180)
-);
 
--- populate from course database on counties
-INSERT INTO counties (county_fips, state, name, land_sq_mi, lat, lon)
-SELECT
-  county_fips,
-  state, 
-  name,
-  land_sq_mi, 
-  lat,
-  lon
-FROM course.counties
-ON CONFLICT (county_fips) DO NOTHING;
+-- ============================================================================
+-- 1. CENSUS ACS 5-YEAR COUNTY DEMOGRAPHICS (Annual schedule)
+-- ============================================================================
 
 -- Row unit: one U.S. county from the 2024 Census ACS 5-year estimates.
 CREATE TABLE IF NOT EXISTS county_demographics (
   county_fips       CHAR(5) PRIMARY KEY CHECK (county_fips ~ '^[0-9]{5}$'),
   county_name       TEXT NOT NULL,
+  acs_year          INTEGER NOT NULL CHECK (acs_year BETWEEN 2009 AND 2030),
   population        INTEGER CHECK (population >= 0),             -- people
   median_income     NUMERIC(12, 2) CHECK (median_income >= 0),   -- USD
   median_home_value NUMERIC(14, 2) CHECK (median_home_value >= 0), -- USD
   housing_units     INTEGER CHECK (housing_units >= 0)           -- housing units
 );
 
+
+-- ============================================================================
+-- 2. NOAA STORM EVENTS (Monthly schedule)
+-- ============================================================================
+
 -- Row unit: one NOAA storm event record in one county or forecast zone.
 CREATE TABLE IF NOT EXISTS storm_events (
   event_id            BIGINT PRIMARY KEY,
   episode_id          BIGINT,
-  state_fips          CHAR(2) NOT NULL REFERENCES prancer.states(state_fips),
-  cz_type             CHAR(1) NOT NULL CHECK (cz_type IN ('Z', 'C', 'M')), -- C=County, Z=Zone, M=Marine, 5 = Desert (if not error)
+  state_fips          CHAR(2) REFERENCES prancer.states(state_fips),
+  noaa_region         TEXT,                                                -- ocean regions (State_FIPS will be NULL)
+  cz_type             CHAR(1) NOT NULL,                                    -- C=County, Z=Zone, M=Marine, 5=Desert (if not error)
   cz_fips             VARCHAR(3) NOT NULL,
   cz_name             TEXT,
   cz_timezone         TEXT,
   county_fips         CHAR(5) CHECK (county_fips IS NULL OR county_fips ~ '^[0-9]{5}$'),
   event_type          TEXT NOT NULL,
-  begin_ts            TIMESTAMPTZ NOT NULL,                      -- UTC
-  end_ts              TIMESTAMPTZ,                               -- UTC
+  begin_ts            TIMESTAMPTZ NOT NULL,                                -- UTC
+  end_ts              TIMESTAMPTZ,                                         -- UTC
   injuries_direct     INTEGER NOT NULL DEFAULT 0 CHECK (injuries_direct >= 0),   -- people
   injuries_indirect   INTEGER NOT NULL DEFAULT 0 CHECK (injuries_indirect >= 0), -- people
   deaths_direct       INTEGER NOT NULL DEFAULT 0 CHECK (deaths_direct >= 0),     -- people
@@ -74,8 +66,17 @@ CREATE TABLE IF NOT EXISTS storm_events (
   begin_lat           DOUBLE PRECISION CHECK (begin_lat BETWEEN -90 AND 90),     -- decimal degrees
   begin_lon           DOUBLE PRECISION CHECK (begin_lon BETWEEN -180 AND 180),   -- decimal degrees
   end_lat             DOUBLE PRECISION CHECK (end_lat BETWEEN -90 AND 90),       -- decimal degrees
-  end_lon             DOUBLE PRECISION CHECK (end_lon BETWEEN -180 AND 180)     -- decimal degrees
+  end_lon             DOUBLE PRECISION CHECK (end_lon BETWEEN -180 AND 180)      -- decimal degrees
 );
+
+CREATE INDEX IF NOT EXISTS idx_storm_events_episode ON storm_events (episode_id);
+CREATE INDEX IF NOT EXISTS idx_storm_events_county  ON storm_events (county_fips);
+CREATE INDEX IF NOT EXISTS idx_storm_events_type_ts ON storm_events (event_type, begin_ts);
+
+
+-- ============================================================================
+-- 3. HURDAT2 ATLANTIC HURRICANE BEST TRACKS (Seasonal schedule)
+-- ============================================================================
 
 -- Row unit: one Atlantic tropical or subtropical cyclone in NHC HURDAT2.
 CREATE TABLE IF NOT EXISTS hurdat_storms (
@@ -83,7 +84,7 @@ CREATE TABLE IF NOT EXISTS hurdat_storms (
   storm_name       TEXT NOT NULL,
   basin            CHAR(2) NOT NULL CHECK (basin IN ('AL', 'EP', 'CP')),
   cyclone_number   INTEGER NOT NULL CHECK (cyclone_number > 0),
-  season_year      INTEGER NOT NULL CHECK (season_year BETWEEN 1851 AND 2030),
+  season_year      INTEGER NOT NULL CHECK (season_year BETWEEN 1980 AND 2030),
   num_track_points INTEGER NOT NULL CHECK (num_track_points > 0) -- count
 );
 
@@ -100,6 +101,14 @@ CREATE TABLE IF NOT EXISTS hurdat_tracks (
   min_pressure_mb   INTEGER CHECK (min_pressure_mb > 0),       -- millibars
   UNIQUE (storm_id, observed_at, record_identifier)
 );
+
+CREATE INDEX IF NOT EXISTS idx_hurdat_tracks_storm   ON hurdat_tracks (storm_id);
+CREATE INDEX IF NOT EXISTS idx_hurdat_tracks_lat_lon ON hurdat_tracks (lat, lon);
+
+
+-- ============================================================================
+-- 4. GHCN-DAILY WEATHER STATIONS & OBSERVATIONS (Daily schedule)
+-- ============================================================================
 
 -- Row unit: one GHCN-Daily weather station.
 CREATE TABLE IF NOT EXISTS stations (
@@ -123,6 +132,11 @@ CREATE TABLE IF NOT EXISTS observations (
   CHECK (tmax IS NULL OR tmin IS NULL OR tmax >= tmin),
   UNIQUE (station_id, date)
 );
+
+
+-- ============================================================================
+-- 5. NWS LIVE OBSERVATIONS & ACTIVE ALERTS (Hourly / Live schedule)
+-- ============================================================================
 
 -- Row unit: one automated surface observation timestamp at an NWS station.
 CREATE TABLE IF NOT EXISTS nws_observations (
@@ -154,18 +168,23 @@ CREATE TABLE IF NOT EXISTS nws_alerts (
   headline     TEXT
 );
 
--- Row unit: one run of src/refresh.py.
+
+-- ============================================================================
+-- 6. INGESTION AUDIT LOG
+-- ============================================================================
+
+-- Row unit: one execution of src/refresh.py for one data source.
 CREATE TABLE IF NOT EXISTS ingestion_runs (
-  run_id        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  source        TEXT NOT NULL,
-  rows_staged   INTEGER NOT NULL,
-  rows_inserted INTEGER NOT NULL,
-  rows_updated  INTEGER NOT NULL
+    run_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    source TEXT NOT NULL,
+    filename TEXT,
+    status TEXT NOT NULL DEFAULT 'success'
+        CHECK (status IN ('success', 'failed')),
+    rows_staged INTEGER NOT NULL DEFAULT 0 CHECK (rows_staged >= 0),
+    rows_inserted INTEGER NOT NULL DEFAULT 0 CHECK (rows_inserted >= 0),
+    rows_updated INTEGER NOT NULL DEFAULT 0 CHECK (rows_updated >= 0)
 );
 
-CREATE INDEX IF NOT EXISTS idx_storm_events_episode ON storm_events (episode_id);
-CREATE INDEX IF NOT EXISTS idx_storm_events_county  ON storm_events (county_fips);
-CREATE INDEX IF NOT EXISTS idx_storm_events_type_ts ON storm_events (event_type, begin_ts);
-CREATE INDEX IF NOT EXISTS idx_hurdat_tracks_storm   ON hurdat_tracks (storm_id);
-CREATE INDEX IF NOT EXISTS idx_hurdat_tracks_lat_lon ON hurdat_tracks (lat, lon);
+CREATE INDEX IF NOT EXISTS idx_ingestion_source_filename
+ON prancer.ingestion_runs (source, filename);

@@ -14,7 +14,7 @@ LOOKBACK_DAYS = 3
 BASE_URL = "https://api.weather.gov/stations"
 
 HEADERS = {
-    "User-Agent": "36-614 Prancer Climate ETL (ahou@andrew.cmu.edu)",
+    "User-Agent": "CMU 36-614 Prancer Climate ETL (your-email@andrew.cmu.edu)",
     "Accept": "application/geo+json"
 }
 

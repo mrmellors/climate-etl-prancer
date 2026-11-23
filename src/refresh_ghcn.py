@@ -467,14 +467,15 @@ def refresh_ghcn(start_year=1996, end_year=2025, force=False):
     print(f"Selected {len(station_ids):,} stations")
 
     with connect(team="prancer", autocommit=True) as conn:
-
         load_stations(conn, stations)
 
-        for year in range(start_year, end_year + 1):
+    for year in range(start_year, end_year + 1):
 
-            filename = f"{year}.csv.gz"
+        filename = f"{year}.csv.gz"
 
-            # Skip previously loaded files
+        # New connection for each year
+        with connect(team="prancer", autocommit=True) as conn:
+
             if not force and already_loaded(conn, filename):
                 print(f"Skipping {year}: already loaded")
                 continue
@@ -500,11 +501,12 @@ def refresh_ghcn(start_year=1996, end_year=2025, force=False):
                     inserted,
                     updated
                 )
-            print(f"{inserted:,} inserted, {updated:,} updated")
 
+            print(f"{inserted:,} inserted, {updated:,} updated")
             print(f"Completed GHCN refresh for {year}")
 
             del df
+
 
 
 def refresh_ghcn_api(start_date=None, end_date=None):
@@ -534,7 +536,7 @@ def refresh_ghcn_api(start_date=None, end_date=None):
 
     print(f"Fetching {start_date} through {end_date}")
 
-    batch_size = 100
+    batch_size = 50
     total_inserted = 0
     total_updated = 0
     total_staged = 0
@@ -561,7 +563,7 @@ def refresh_ghcn_api(start_date=None, end_date=None):
 
             batch_number = i // batch_size + 1
 
-            if batch_number % 10 == 0 or batch_number == total_batches:
+            if batch_number % 1 == 0 or batch_number == total_batches:
                 print(
                     f"Batch {batch_number}/{total_batches}: "
                     f"{total_inserted:,} inserted, "
