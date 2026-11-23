@@ -13,8 +13,8 @@ WITH one_degree AS (
 point AS (
     SELECT lat, lon
     FROM prancer.hurdat_tracks
-    WHERE lat BETWEEN 24 AND 36
-      AND lon BETWEEN -99 AND -75
+    WHERE lat BETWEEN 24 AND 39.5
+      AND lon BETWEEN -99 AND -74
       AND observed_at >= DATE '2020-01-01'
       AND observed_at < DATE '2026-01-01'
     ORDER BY observed_at, track_id
@@ -34,7 +34,7 @@ every_distance AS (
         )) AS km
     FROM prancer.stations AS s
     CROSS JOIN point AS p
-    WHERE s.state_fips IN ('48', '22', '12', '13', '45', '37')
+    WHERE s.state_fips IN ('48', '22', '01', '13', '12', '45', '37', '51')
 )
 SELECT
     'one degree of latitude not about 111.2 km' AS problem

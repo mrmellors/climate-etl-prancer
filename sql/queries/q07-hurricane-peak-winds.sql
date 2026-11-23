@@ -24,8 +24,8 @@ WITH ranked_tracks AS (
       ON s.storm_id = t.storm_id
     WHERE s.basin = 'AL'
       AND s.season_year BETWEEN 1980 AND 2025
-      AND t.lat BETWEEN 24 AND 36
-      AND t.lon BETWEEN -99 AND -75
+      AND t.lat BETWEEN 24 AND 39.5
+      AND t.lon BETWEEN -99 AND -74
 )
 SELECT
     storm_name,

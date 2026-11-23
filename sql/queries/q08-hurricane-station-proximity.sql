@@ -3,7 +3,7 @@
 -- Client use: Identify nearby weather stations for hurricane exposure review.
 -- Row unit: One station and hurricane-track point pair.
 -- Excludes: Tracks outside the Southeast coastal box,
--- stations outside the six target states, and pairs farther
+-- stations outside the eight target states, and pairs farther
 -- than 50 km. Nearby does not imply simultaneous observations.
 -- Test: sql/tests/t08-hurricane-station-proximity.sql
 
@@ -24,9 +24,9 @@ WITH distances AS (
     JOIN prancer.hurdat_tracks AS h
       ON s.lat BETWEEN h.lat - 0.50 AND h.lat + 0.50
      AND s.lon BETWEEN h.lon - 0.65 AND h.lon + 0.65
-    WHERE s.state_fips IN ('48', '22', '12', '13', '45', '37')
-      AND h.lat BETWEEN 24 AND 36
-      AND h.lon BETWEEN -99 AND -75
+    WHERE s.state_fips IN ('48', '22', '01', '13', '12', '45', '37', '51')
+      AND h.lat BETWEEN 24 AND 39.5
+      AND h.lon BETWEEN -99 AND -74
       AND h.observed_at >= DATE '2020-01-01'
       AND h.observed_at < DATE '2026-01-01'
 )

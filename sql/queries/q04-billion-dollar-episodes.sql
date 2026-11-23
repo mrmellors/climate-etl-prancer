@@ -3,7 +3,7 @@
 -- Client use: Track high-loss NOAA episodes, not official
 -- NOAA billion-dollar disasters.
 -- Row unit: One decade.
--- Exclusions / caveats: Six Southeast states; episodes without
+-- Exclusions / caveats: Eight target states; episodes without
 -- an episode_id or reported property damage excluded;
 -- nominal USD; regional subset only.
 -- Test: sql/tests/t04-billion-dollar-episodes.sql
@@ -14,7 +14,7 @@ WITH episode_damage AS (
         MIN(EXTRACT(YEAR FROM begin_ts)) AS event_year,
         SUM(damage_property_usd) AS damage_usd
     FROM prancer.storm_events
-    WHERE state_fips IN ('48', '22', '12', '13', '45', '37')
+    WHERE state_fips IN ('48', '22', '01', '13', '12', '45', '37', '51')
       AND episode_id IS NOT NULL
       AND damage_property_usd IS NOT NULL
     GROUP BY episode_id

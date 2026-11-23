@@ -4,5 +4,5 @@
 SELECT event_id
 FROM prancer.storm_events
 WHERE event_type IN ('Flood', 'Flash Flood')
-  AND state_fips IN ('48', '22', '12', '13', '45', '37')
+  AND state_fips IN ('48', '22', '01', '13', '12', '45', '37', '51')
   AND damage_property_usd < 0;
