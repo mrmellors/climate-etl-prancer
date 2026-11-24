@@ -76,7 +76,7 @@ The primary geographic scope covers **eight states**: Texas (`48`), Louisiana (`
 For a new, empty schema, create the database tables using `sql/schema.sql` with the appropriate team role and schema, then load the states reference table before the other data sources:
 
 ```bash
-psql -d mads_f26 -v ON_ERROR_STOP=1 -f sql/schema.sql
+python src/run_schema.py # runs the schema.sql file
 python src/load_states.py
 ```
 
