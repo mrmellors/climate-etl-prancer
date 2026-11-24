@@ -93,45 +93,54 @@ The primary tables include:
 | `county_demographics` | Census county demographic and housing estimates |
 | `ingestion_runs` | Refresh history and ingestion statistics |
 
+
 ### 4. Run a safe refresh
 
-Each data source can be refreshed independently because the sources update on different schedules.
+Each data source can be refreshed independently because the sources update on different schedules. The refresh controller uses the default settings for each source, while historical backfills and custom date ranges are handled by the individual refresh scripts.
 
-To test the GHCN refresh without saving changes:
+To refresh recent GHCN observations:
 
 ```bash
-python src/refresh.py \
-  --team prancer \
-  --source ghcn \
-  --start 2025-09-01 \
-  --end 2025-10-01 \
-  --dry-run
+python src/refresh.py --source ghcn
 ```
 
-A successful run reports the number of records staged, inserted, and updated, followed by:
+This refresh retrieves the previous 14 days of current-year GHCN observations by default. A successful run reports the records processed and ends with:
 
 ```text
-Dry run: undoing all changes.
+Refresh complete!
 ```
 
-To refresh GHCN and save changes, remove `--dry-run`:
+To refresh GHCN observations starting from a specific date:
 
 ```bash
-python src/refresh.py \
-  --team prancer \
-  --source ghcn \
-  --start 2025-09-01 \
-  --end 2025-10-01
+python src/refresh_ghcn.py --mode api --start-date 2026-01-01
+```
+
+To load historical GHCN observations:
+
+```bash
+python src/refresh_ghcn.py --mode bulk --start-year 1996 --end-year 2025
 ```
 
 Additional refresh commands are available for each source:
 
 ```bash
-python src/refresh.py --team prancer --source storms --start 2020-01-01 --end 2026-01-01 --dry-run
-python src/refresh.py --team prancer --source hurdat --dry-run
-python src/refresh.py --team prancer --source nws --dry-run
-python src/refresh.py --team prancer --source census --dry-run
+python src/refresh.py --source storms
+python src/refresh.py --source hurricanes
+python src/refresh.py --source nws
+python src/refresh.py --source nws_alerts
+python src/refresh.py --source census
 ```
+
+To refresh all sources using their default settings:
+
+```bash
+python src/refresh.py --source all
+```
+
+The refresh controller does not support `--dry-run`. Each individual refresh script manages its own transactions, so a failed transaction is rolled back without committing its incomplete changes. Previously committed batches or sources remain intact.
+
+Re-running unchanged data should generally produce zero inserted or updated records, although live sources may receive additional observations between runs.
 
 These commands use the same transaction and logging framework. Successful execution of one source does not guarantee that the others are configured or populated correctly.
 
@@ -261,13 +270,17 @@ Insurance analyses primarily focus on Texas, Louisiana, Florida, Georgia, South 
 
 State FIPS codes are:
 
+
 | State | FIPS |
 |---|---|
 | Texas | 48 |
 | Louisiana | 22 |
+| Alabama | 01 |
 | Florida | 12 |
 | Georgia | 13 |
 | South Carolina | 45 |
 | North Carolina | 37 |
+| Virginia | 51 |
+
 
 Hurricane tracks and other source datasets may extend beyond the target region, depending on their original geographic coverage. Client queries apply the appropriate regional filters.
